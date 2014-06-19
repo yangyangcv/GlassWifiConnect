@@ -27,7 +27,7 @@ import android.hardware.Camera;
 import android.hardware.Camera.PreviewCallback;
 import android.hardware.Camera.AutoFocusCallback;
 import android.hardware.Camera.Size;
-
+import java.util.List;
 
 /* Import ZBar Class files */
 import net.sourceforge.zbar.ImageScanner;
@@ -40,6 +40,10 @@ public class MainActivity extends Activity
 {
 	final static String TAG = "GlassWifiConnect";
 	
+	public enum WifiType {
+        WEP, WPA, NOPASSWORD
+    }
+
     private Camera mCamera;
     private CameraPreview mPreview;
     private Handler autoFocusHandler;
@@ -141,7 +145,8 @@ public class MainActivity extends Activity
                     SymbolSet syms = scanner.getResults();
                     for (Symbol sym : syms) {
                     	String text = sym.getData();
-                        parseWifiInfo(text);
+                        //parseWifiInfo(text);
+                    	parseWifiInfo2(text);
                         break;
                     }
                 }
@@ -206,13 +211,63 @@ public class MainActivity extends Activity
     	
     	finish();
     }
+    
+  //我自己写的,新的解析格式，例如 WIFI:S:ssid;P:password;T:WPA;;
+    void parseWifiInfo2(String text)
+    {
+    	if(!text.startsWith("WIFI:") || !text.endsWith(";;"))
+    	{
+    		Toast t = Toast.makeText(getApplicationContext(), "Not a valid Wifi QR code", Toast.LENGTH_LONG);
+    		t.show();
+    		return;
+    	} 	
+    	Log.d(TAG, "QR: "+text);
+    	String ssid = null;
+    	String password = null;
+    	WifiType type = WifiType.WPA;
+    	text = text.substring("WIFI:".length(), text.length()-2);
+    	
+    	//This split method leads to some weird edge cases, but I want to support semicolons in fields
+    	//without breaking backwards compatibility
+    	String[] params = text.split(";(?=S:|P:|T:)");
+    	// WIFI:S:ssid;P:password;T:WPA;;
+    	for(String s: params)
+    	{
+    		String[] keyval = s.split(":");
+    		if(keyval[0].equals("S"))
+    		{
+    			ssid = keyval[1];
+    		}
+    		else if(keyval[0].equals("P"))
+    		{
+    			password = keyval[1];
+    		}
+    		else if(keyval[0].equals("T"))
+    		{
+    			if(keyval[1].equalsIgnoreCase("WEP"))
+    				type = WifiType.WEP;
+    			else if(keyval[1].equalsIgnoreCase("WPA"))
+    				type = WifiType.WPA;
+    			else if(keyval[1].equalsIgnoreCase("NOPASSWORD"))
+    				type = WifiType.NOPASSWORD;
+    		}
+    	}
+    	String infoStr = "parseWifiInfo2 get: " + ssid + ", "+password+", "+type.toString();
+    	Log.d(TAG, infoStr);
+    	Toast t = Toast.makeText(getApplicationContext(), infoStr, Toast.LENGTH_SHORT);
+    	t.show();
+    	
+    	saveWifiConfig(ssid, password, type);
+    	
+    	finish();
+    }
         
     // Mimic continuous auto-focusing
     AutoFocusCallback autoFocusCB = new AutoFocusCallback() {
             public void onAutoFocus(boolean success, Camera camera) {
                 autoFocusHandler.postDelayed(doAutoFocus, 1000);
             }
-        };
+        };     
         
     boolean saveEapConfig(String ssid, String userName, String passString, String EAP, String phase2, String anon)
     {
@@ -313,5 +368,73 @@ public class MainActivity extends Activity
 	    t.show();
 	    return true;
 	}
-    
+
+    //我自己写的
+    boolean saveWifiConfig(String ssid, String password, WifiType type)
+    { 
+	    /******************Configuration Strings*************************/ 
+        WifiConfiguration config = new WifiConfiguration();
+        config.allowedAuthAlgorithms.clear();
+        config.allowedGroupCiphers.clear();
+        config.allowedKeyManagement.clear();
+        config.allowedPairwiseCiphers.clear();
+        config.allowedProtocols.clear();
+        config.SSID = "\"" + ssid + "\"";
+        if (type == WifiType.NOPASSWORD) {
+            config.wepKeys[0] = "";
+            config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+            config.wepTxKeyIndex = 0;
+        }
+        else if (type == WifiType.WEP) {
+            config.preSharedKey = "\"" + password + "\"";
+            config.hiddenSSID = true;
+            config.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.SHARED);
+            config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP);
+            config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
+            config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.WEP40);
+            config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.WEP104);
+            config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+            config.wepTxKeyIndex = 0;
+        }
+        else if (type == WifiType.WPA) {
+            config.preSharedKey = "\"" + password + "\"";
+            config.hiddenSSID = true;
+            config.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.OPEN);
+            config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
+            config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+            config.allowedPairwiseCiphers.set(WifiConfiguration.PairwiseCipher.TKIP);
+            config.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP); 
+            config.allowedPairwiseCiphers.set(WifiConfiguration.PairwiseCipher.CCMP);
+            config.status = WifiConfiguration.Status.ENABLED;                  
+        }    
+	    WifiManager wifiManag = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+	    boolean res1 = true;
+	    if(!wifiManag.isWifiEnabled())
+	    	res1 = wifiManag.setWifiEnabled(true);
+	    Log.d("WifiPreference", "setWifiEnabled " + res1 );
+	    //查看是否已有该SSID的config，若有，则先删除再add
+	    List<WifiConfiguration> existingConfigs = wifiManag.getConfiguredNetworks();
+        for (WifiConfiguration existingConfig : existingConfigs) {
+            if (existingConfig.SSID.equals("\"" + ssid + "\"")) {
+            	wifiManag.removeNetwork(existingConfig.networkId);
+            }
+        }
+	    int res = wifiManag.addNetwork(config);
+	    Log.d("WifiPreference", "add Network returned " + res );
+	    boolean c = wifiManag.saveConfiguration();
+	    Log.d("WifiPreference", "Save configuration returned " + c );
+	    boolean d = wifiManag.enableNetwork(res, true);   
+	    Log.d("WifiPreference", "enableNetwork returned " + d );    
+	    if(!res1 || res == -1 || !c || !d)
+	    {
+	    	Toast t = Toast.makeText(getApplicationContext(), "WiFi network connection failed", Toast.LENGTH_LONG);
+	    	t.show();
+	    	return false;
+	    }    
+	    try { Thread.sleep(1000); } catch (InterruptedException e) { e.printStackTrace(); }    
+	    Toast t = Toast.makeText(getApplicationContext(), "Network added", Toast.LENGTH_SHORT);
+	    t.show();
+	    return true;
+	}
+
 }
