@@ -35,3 +35,7 @@ NOTE: Be aware that online QR code generators may or may not send the text (cont
     
 Now say "ok, glass add wifi network" to run the app on Glass and scan the generated QR code. You should see a "Connecting to..." message, followed shortly by
 a "Connected!" message if everything worked properly.
+
+UPDATE  20140619
+substitute enterprise connection with WEP, WPA or no password wifi. e.g., For the WPA case, the OR string should look like:
+* WIFI:S:ssid;P:password;T:WPA;;;
